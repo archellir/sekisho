@@ -65,6 +65,7 @@ func TestServerBasicProxy(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Auth.Provider = ""
+	cfg.Policy.DefaultAction = "allow"
 	cfg.Upstream = []config.UpstreamConfig{
 		{
 			Host:    "test.example.com",
