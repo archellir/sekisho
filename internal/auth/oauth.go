@@ -96,7 +96,12 @@ func (o *OAuthManager) HandleCallback(w http.ResponseWriter, r *http.Request) (*
 		return nil, err
 	}
 
-	session, err := o.sessionMgr.CreateSession(w, userInfo.ID, userInfo.Email, userInfo.Name, userInfo.Picture)
+	session, err := o.sessionMgr.CreateSession(w, &session.SessionRequest{
+		UserID:  userInfo.ID,
+		Email:   userInfo.Email,
+		Name:    userInfo.Name,
+		Picture: userInfo.Picture,
+	})
 	if err != nil {
 		return nil, err
 	}
