@@ -1,4 +1,4 @@
-# 関所 (Sekisho)
+# Sekisho (関所 🇯🇵)
 
 A minimal zero-trust proxy for personal use. Single Go binary, no dependencies.
 
