@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 )
 
 type SecurityHeaders struct {
@@ -46,7 +48,7 @@ func (sh *SecurityHeaders) Handler(next http.Handler) http.Handler {
 			w.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
 		}
 		
-		if sh.StrictTransportSecurity != "" && r.TLS != nil {
+		if sh.StrictTransportSecurity != "" {
 			w.Header().Set("Strict-Transport-Security", sh.StrictTransportSecurity)
 		}
 		
@@ -195,4 +197,92 @@ func joinStrings(strs []string, sep string) string {
 	}
 	
 	return result
+}
+
+type SecurityConfig struct {
+	ContentTypeOptions      string
+	FrameOptions           string
+	XSSProtection          string
+	ReferrerPolicy         string
+	CSP                    string
+	HSTS                   string
+}
+
+func NewSecurityHeaders(config SecurityConfig) *SecurityHeaders {
+	return &SecurityHeaders{
+		ContentTypeOptions:      config.ContentTypeOptions,
+		FrameOptions:           config.FrameOptions,
+		XSSProtection:          config.XSSProtection,
+		ReferrerPolicy:         config.ReferrerPolicy,
+		ContentSecurityPolicy:  config.CSP,
+		StrictTransportSecurity: config.HSTS,
+	}
+}
+
+type CORSMiddleware struct {
+	config CORSConfig
+}
+
+func NewCORSMiddleware(config CORSConfig) *CORSMiddleware {
+	if config.MaxAge == 0 {
+		config.MaxAge = 86400 // 24 hours
+	}
+	return &CORSMiddleware{config: config}
+}
+
+func (c *CORSMiddleware) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		
+		if origin != "" && c.isOriginAllowed(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		
+		if r.Method == "OPTIONS" {
+			w.Header().Set("Access-Control-Allow-Methods", joinStrings(c.config.AllowedMethods, ", "))
+			w.Header().Set("Access-Control-Allow-Headers", joinStrings(c.config.AllowedHeaders, ", "))
+			w.Header().Set("Access-Control-Max-Age", fmt.Sprintf("%d", c.config.MaxAge))
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (c *CORSMiddleware) isOriginAllowed(origin string) bool {
+	for _, allowed := range c.config.AllowedOrigins {
+		if allowed == "*" || allowed == origin {
+			return true
+		}
+	}
+	return false
+}
+
+type TimeoutMiddleware struct {
+	timeout time.Duration
+}
+
+func NewTimeoutMiddleware(timeout time.Duration) *TimeoutMiddleware {
+	return &TimeoutMiddleware{timeout: timeout}
+}
+
+func (t *TimeoutMiddleware) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		done := make(chan bool, 1)
+		
+		go func() {
+			next.ServeHTTP(w, r)
+			done <- true
+		}()
+		
+		select {
+		case <-done:
+			// Request completed normally
+		case <-time.After(t.timeout):
+			w.WriteHeader(http.StatusRequestTimeout)
+			w.Write([]byte("Request Timeout"))
+		}
+	})
 }
