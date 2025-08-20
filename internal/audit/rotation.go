@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -191,31 +190,3 @@ type LogFormatter interface {
 	Format(entry *Entry) ([]byte, error)
 }
 
-type JSONFormatter struct{}
-
-func (jf *JSONFormatter) Format(entry *Entry) ([]byte, error) {
-	return json.Marshal(entry)
-}
-
-type TextFormatter struct {
-	TimestampFormat string
-}
-
-func (tf *TextFormatter) Format(entry *Entry) ([]byte, error) {
-	format := tf.TimestampFormat
-	if format == "" {
-		format = "2006-01-02T15:04:05.000Z07:00"
-	}
-
-	line := fmt.Sprintf("[%s] %s %s %s %s - %d %s\n",
-		entry.Timestamp.Format(format),
-		entry.Request.IP,
-		entry.User.Email,
-		entry.Request.Method,
-		entry.Request.Path,
-		entry.Response.Status,
-		entry.Decision.Action,
-	)
-
-	return []byte(line), nil
-}
