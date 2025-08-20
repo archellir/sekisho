@@ -36,8 +36,45 @@ func NewManager(encryptKey, signKey []byte, domain string, secure bool, duration
 	}, nil
 }
 
-func (m *Manager) CreateSession(w http.ResponseWriter, userID, email, name, picture string) (*Session, error) {
-	session, err := m.store.Create(userID, email, name, picture)
+type SessionRequest struct {
+	UserID  string
+	Email   string
+	Name    string
+	Picture string
+}
+
+func (m *Manager) CreateSession(w http.ResponseWriter, req *SessionRequest) (*Session, error) {
+	session, err := m.store.Create(req.UserID, req.Email, req.Name, req.Picture)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := m.cookieManager.SetSessionCookie(w, session); err != nil {
+		m.store.Delete(session.ID)
+		return nil, err
+	}
+
+	if err := m.cookieManager.SetCSRFCookie(w, session.CSRFToken, session.ExpiresAt); err != nil {
+		m.store.Delete(session.ID)
+		return nil, err
+	}
+
+	return session, nil
+}
+
+// CreateSessionFromUserData creates a session using individual parameters (for backward compatibility)
+func (m *Manager) CreateSessionFromUserData(w http.ResponseWriter, userID, email, name, picture string) (*Session, error) {
+	return m.CreateSession(w, &SessionRequest{
+		UserID:  userID,
+		Email:   email,
+		Name:    name,
+		Picture: picture,
+	})
+}
+
+// CreateSessionWithExpiry creates a session with custom expiration (mainly for testing)
+func (m *Manager) CreateSessionWithExpiry(w http.ResponseWriter, req *SessionRequest, expiresAt time.Time) (*Session, error) {
+	session, err := m.store.CreateWithExpiry(req.UserID, req.Email, req.Name, req.Picture, expiresAt)
 	if err != nil {
 		return nil, err
 	}
