@@ -2,7 +2,7 @@
 
 A minimal zero-trust proxy for personal use. Single Go binary, no dependencies.
 
-> **関所 (Sekisho)** - Japanese checkpoint stations that controlled access during the Edo period. A fitting name for a modern zero-trust gateway.
+> **関所 (Sekisho)** - Japanese checkpoint stations that controlled access during the Edo period.
 
 ## Features ✨
 
