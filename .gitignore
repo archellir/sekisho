@@ -48,3 +48,10 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# MD files
+*.md
+!README.md
+
+# binary
+sekisho
