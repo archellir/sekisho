@@ -202,16 +202,20 @@ make test-cover
 
 ## Comparison
 
-| Feature | Sekisho | Pomerium | Traefik | nginx |
-|---------|---------|----------|---------|-------|
-| Dependencies | 0 | Many | Many | Few |
-| Binary Size | ~10MB | ~50MB | ~100MB | N/A |
-| Memory Usage | <100MB | ~200MB | ~150MB | ~50MB |
-| Configuration | YAML | YAML | YAML/TOML | Config files |
-| OAuth2/OIDC | ✅ | ✅ | ✅ | ❌ |
-| Policy Engine | ✅ | ✅ | Limited | Limited |
-| Session Management | ✅ | ✅ | ❌ | ❌ |
-| Behind Ingress | ✅ | ❌ | ✅ | N/A |
+| Feature | Sekisho | Pomerium | Teleport | Traefik | nginx |
+|---------|---------|----------|----------|---------|-------|
+| Dependencies | 0 | Few | Few | Many | Few |
+| Binary Size | ~10MB | ~25MB | ~150MB | ~90MB | N/A |
+| Memory Usage | <100MB | ~200MB | >1GB | ~150MB | ~50MB |
+| Configuration | YAML | YAML | YAML | YAML/TOML | Config files |
+| OAuth2/OIDC | ✅ | ✅ | ✅ | Via Plugin | Via Lua |
+| Policy Engine | ✅ | ✅ | ✅ | Limited | Limited |
+| Session Management | ✅ | ✅ | ✅ | ❌ | Via Lua |
+| Certificate Auth | ❌ | ❌ | ✅ | ❌ | ❌ |
+| SSH Proxy | ❌ | ❌ | ✅ | ❌ | ❌ |
+| TCP Proxy | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Behind Ingress | ✅ | ❌ | ❌ | ✅ | N/A |
+| Target Use Case | Personal/Small | Enterprise | Enterprise | Load Balancer | Web Server |
 
 ## License
 
