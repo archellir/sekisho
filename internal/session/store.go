@@ -48,7 +48,13 @@ func (s *Store) Create(userID, email, name, picture string) (*Session, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	crypto, err := NewCrypto(make([]byte, 32), make([]byte, 32))
+	// Generate secure random keys for this session
+	encryptKey, signKey, err := GenerateKeys()
+	if err != nil {
+		return nil, err
+	}
+
+	crypto, err := NewCrypto(encryptKey[:], signKey[:])
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +77,48 @@ func (s *Store) Create(userID, email, name, picture string) (*Session, error) {
 		Name:      name,
 		Picture:   picture,
 		ExpiresAt: now.Add(s.ttl),
+		CreatedAt: now,
+		LastSeen:  now,
+		CSRFToken: csrfToken,
+	}
+
+	s.sessions[sessionID] = session
+	return session, nil
+}
+
+func (s *Store) CreateWithExpiry(userID, email, name, picture string, expiresAt time.Time) (*Session, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Generate secure random keys for this session
+	encryptKey, signKey, err := GenerateKeys()
+	if err != nil {
+		return nil, err
+	}
+
+	crypto, err := NewCrypto(encryptKey[:], signKey[:])
+	if err != nil {
+		return nil, err
+	}
+
+	sessionID, err := crypto.GenerateSessionID()
+	if err != nil {
+		return nil, err
+	}
+
+	csrfToken, err := crypto.GenerateCSRFToken()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	session := &Session{
+		ID:        sessionID,
+		UserID:    userID,
+		Email:     email,
+		Name:      name,
+		Picture:   picture,
+		ExpiresAt: expiresAt,
 		CreatedAt: now,
 		LastSeen:  now,
 		CSRFToken: csrfToken,
