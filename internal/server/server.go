@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
+	"github.com/archellir/sekisho/internal/audit"
 	"github.com/archellir/sekisho/internal/auth"
 	"github.com/archellir/sekisho/internal/config"
 	"github.com/archellir/sekisho/internal/middleware"
@@ -21,6 +23,9 @@ type Server struct {
 	oauthMgr      *auth.OAuthManager
 	policyEngine  *policy.Engine
 	proxyHandler  *proxy.ProxyHandler
+	tcpProxy      *proxy.TCPProxy
+	auditLogger   *audit.Logger
+	metrics       *middleware.ProxyMetrics
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -67,15 +72,41 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	transport := proxy.NewTransport()
 	proxyHandler := proxy.NewProxyHandler(cfg, transport)
 
+	var tcpProxy *proxy.TCPProxy
+	if len(cfg.TCPProxy) > 0 {
+		tcpProxy = proxy.NewTCPProxy(cfg)
+	}
+
+	var auditWriter = os.Stdout
+	if cfg.Audit.LogPath != "" && cfg.Audit.LogPath != "/dev/stdout" {
+		if file, err := os.OpenFile(cfg.Audit.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			auditWriter = file
+		}
+	}
+
+	auditLogger := audit.NewLogger(auditWriter, cfg.Audit.Enabled, cfg.Audit.IncludeRequestBody, cfg.Audit.IncludeResponseBody)
+	metrics := middleware.NewProxyMetrics(cfg.Metrics.Namespace)
+
 	server := &Server{
 		config:       cfg,
 		sessionMgr:   sessionMgr,
 		oauthMgr:     oauthMgr,
 		policyEngine: policyEngine,
 		proxyHandler: proxyHandler,
+		tcpProxy:     tcpProxy,
+		auditLogger:  auditLogger,
+		metrics:      metrics,
 	}
 
 	server.setupRoutes()
+
+	if server.tcpProxy != nil {
+		go func() {
+			if err := server.tcpProxy.Start(); err != nil {
+				log.Printf("TCP proxy failed to start: %v", err)
+			}
+		}()
+	}
 
 	return server, nil
 }
@@ -87,19 +118,28 @@ func (s *Server) setupRoutes() {
 	mux.HandleFunc("/auth/callback", s.handleCallback)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 	mux.HandleFunc("/health", s.handleHealth)
+	
+	if s.config.Metrics.Enabled {
+		mux.Handle(s.config.Metrics.Path, s.metrics)
+	}
 
 	securityHeaders := middleware.DefaultSecurityHeaders()
 	rateLimiter := middleware.NewRateLimiter(s.config.RateLimit.RequestsPerSecond, s.config.RateLimit.BurstSize)
 	recovery := &middleware.Recovery{}
 	requestID := &middleware.RequestID{}
+	auditMiddleware := audit.NewAuditMiddleware(s.auditLogger)
 
 	handler := securityHeaders.Handler(
-		rateLimiter.Handler(
-			recovery.Handler(
-				requestID.Handler(
-					s.authMiddleware(
-						s.policyMiddleware(
-							s.proxyHandler,
+		s.metrics.Handler(
+			rateLimiter.Handler(
+				recovery.Handler(
+					requestID.Handler(
+						auditMiddleware.Handler(
+							s.authMiddleware(
+								s.policyMiddleware(
+									s.proxyHandler,
+								),
+							),
 						),
 					),
 				),
@@ -140,9 +180,13 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	_, err := s.oauthMgr.HandleCallback(w, r)
 	if err != nil {
 		log.Printf("OAuth callback error: %v", err)
+		s.auditLogger.LogAuth("", "auth_failed", err.Error(), r)
+		s.metrics.RecordAuth(false)
 		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
+	
+	s.metrics.RecordAuth(true)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
