@@ -29,8 +29,8 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
-	encryptKey := []byte("your-32-byte-encryption-key-here!")
-	signKey := []byte("your-32-byte-signing-key-here!!!")
+	encryptKey := []byte("12345678901234567890123456789012")
+	signKey := []byte("98765432109876543210987654321098")
 
 	sessionMgr, err := session.NewManager(
 		encryptKey, signKey,
@@ -42,18 +42,21 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create session manager: %w", err)
 	}
 
-	provider, err := auth.NewProvider(cfg.Auth.Provider, cfg.Auth.ClientID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create auth provider: %w", err)
-	}
+	var oauthMgr *auth.OAuthManager
+	if cfg.Auth.Provider != "" {
+		provider, err := auth.NewProvider(cfg.Auth.Provider, cfg.Auth.ClientID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create auth provider: %w", err)
+		}
 
-	oauthMgr := auth.NewOAuthManager(
-		provider,
-		cfg.Auth.ClientID,
-		cfg.Auth.ClientSecret,
-		cfg.Auth.RedirectURL,
-		sessionMgr,
-	)
+		oauthMgr = auth.NewOAuthManager(
+			provider,
+			cfg.Auth.ClientID,
+			cfg.Auth.ClientSecret,
+			cfg.Auth.RedirectURL,
+			sessionMgr,
+		)
+	}
 
 	rules := make([]*policy.Rule, len(cfg.Policy.Rules))
 	for i, ruleConfig := range cfg.Policy.Rules {
@@ -128,6 +131,7 @@ func (s *Server) setupRoutes() {
 	recovery := &middleware.Recovery{}
 	requestID := &middleware.RequestID{}
 	auditMiddleware := audit.NewAuditMiddleware(s.auditLogger)
+	authMiddleware := middleware.NewAuthMiddleware(s.sessionMgr, s.oauthMgr, s.oauthMgr != nil)
 
 	handler := securityHeaders.Handler(
 		s.metrics.Handler(
@@ -135,7 +139,7 @@ func (s *Server) setupRoutes() {
 				recovery.Handler(
 					requestID.Handler(
 						auditMiddleware.Handler(
-							s.authMiddleware(
+							authMiddleware.Handler(
 								s.policyMiddleware(
 									s.proxyHandler,
 								),
@@ -163,6 +167,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.oauthMgr == nil {
+		http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
+		return
+	}
+
 	if s.sessionMgr.IsAuthenticated(r) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -174,6 +183,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.oauthMgr == nil {
+		http.Error(w, "Authentication not configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -195,8 +209,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.oauthMgr.Logout(w, r); err != nil {
-		log.Printf("Logout error: %v", err)
+	if s.oauthMgr != nil {
+		if err := s.oauthMgr.Logout(w, r); err != nil {
+			log.Printf("Logout error: %v", err)
+		}
 	}
 
 	http.Redirect(w, r, "/", http.StatusFound)
@@ -208,28 +224,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"healthy","service":"sekisho"}`))
 }
 
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/auth/login" || 
-		   r.URL.Path == "/auth/callback" || r.URL.Path == "/auth/logout" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		session, err := s.sessionMgr.GetSession(r)
-		if err != nil {
-			s.oauthMgr.StartAuthFlow(w, r)
-			return
-		}
-
-		r.Header.Set("X-User-ID", session.UserID)
-		r.Header.Set("X-User-Email", session.Email)
-		r.Header.Set("X-User-Name", session.Name)
-
-		s.sessionMgr.UpdateLastSeen(r)
-		next.ServeHTTP(w, r)
-	})
-}
 
 func (s *Server) policyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +268,12 @@ func getClientIP(r *http.Request) string {
 	}
 	
 	return r.RemoteAddr
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.httpServer != nil && s.httpServer.Handler != nil {
+		s.httpServer.Handler.ServeHTTP(w, r)
+	}
 }
 
 func (s *Server) Stats() map[string]interface{} {
